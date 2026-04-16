@@ -1,0 +1,298 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import torch
+import torch.nn as nn
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+from torch.utils.data import DataLoader, Subset
+from torchvision import models, transforms
+from torchvision.datasets import ImageFolder
+
+
+def set_seed(seed: int) -> None:
+    import random
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def resolve_data_root(data_root: str | None) -> Path:
+    if data_root:
+        p = Path(data_root)
+        if not p.exists() or not p.is_dir():
+            raise FileNotFoundError(f"data_root 不存在或不是目录: {p}")
+        return p
+
+    cands = [
+        Path("dataset") / "Garbage classification" / "Garbage classification",
+        Path("dataset") / "Garbage classification",
+        Path("dataset"),
+    ]
+    for p in cands:
+        if p.exists() and p.is_dir():
+            subs = [d for d in p.iterdir() if d.is_dir() and not d.name.startswith(".")]
+            if len(subs) >= 2:
+                return p
+
+    dataset_dir = Path("dataset")
+    if dataset_dir.exists():
+        for p in dataset_dir.rglob("*"):
+            if p.is_dir():
+                subs = [d for d in p.iterdir() if d.is_dir() and not d.name.startswith(".")]
+                if len(subs) >= 2:
+                    return p
+
+    raise FileNotFoundError("找不到符合 ImageFolder 的数据根目录")
+
+
+def stratified_split_indices(
+    targets: list[int] | np.ndarray,
+    ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
+    seed: int = 42,
+) -> tuple[list[int], list[int], list[int]]:
+    r = np.asarray(ratios, dtype=float)
+    r = r / r.sum()
+    t = np.asarray(targets)
+    rng = np.random.default_rng(seed)
+    tr: list[int] = []
+    va: list[int] = []
+    te: list[int] = []
+
+    for cls in np.unique(t):
+        idx = np.where(t == cls)[0]
+        idx = rng.permutation(idx)
+        n = len(idx)
+        n_tr = int(round(n * r[0]))
+        n_va = int(round(n * r[1]))
+        n_tr = max(1, min(n_tr, n - 2))
+        n_va = max(1, min(n_va, n - n_tr - 1))
+        tr.extend(idx[:n_tr].tolist())
+        va.extend(idx[n_tr : n_tr + n_va].tolist())
+        te.extend(idx[n_tr + n_va :].tolist())
+
+    rng.shuffle(tr)
+    rng.shuffle(va)
+    rng.shuffle(te)
+    return tr, va, te
+
+
+def build_transforms(image_size: int = 224, augmentation: str = "standard") -> tuple[transforms.Compose, transforms.Compose]:
+    norm = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    if augmentation == "none":
+        train_tfms = transforms.Compose([transforms.Resize((image_size, image_size)), transforms.ToTensor(), norm])
+    elif augmentation == "standard":
+        train_tfms = transforms.Compose(
+            [
+                transforms.Resize((image_size, image_size)),
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomRotation(15),
+                transforms.ToTensor(),
+                norm,
+            ]
+        )
+    else:
+        raise ValueError(f"unknown augmentation: {augmentation}")
+
+    eval_tfms = transforms.Compose([transforms.Resize((image_size, image_size)), transforms.ToTensor(), norm])
+    return train_tfms, eval_tfms
+
+
+def make_dataloaders(
+    data_root: Path,
+    image_size: int = 224,
+    augmentation: str = "standard",
+    batch_size: int = 32,
+    num_workers: int = 2,
+    seed: int = 42,
+) -> tuple[DataLoader, DataLoader, DataLoader, list[str]]:
+    train_tfms, eval_tfms = build_transforms(image_size=image_size, augmentation=augmentation)
+    base = ImageFolder(str(data_root))
+    class_names = base.classes
+    tr_idx, va_idx, te_idx = stratified_split_indices(base.targets, (0.7, 0.15, 0.15), seed)
+    ds_tr = Subset(ImageFolder(str(data_root), transform=train_tfms), tr_idx)
+    ds_va = Subset(ImageFolder(str(data_root), transform=eval_tfms), va_idx)
+    ds_te = Subset(ImageFolder(str(data_root), transform=eval_tfms), te_idx)
+    dl_tr = DataLoader(ds_tr, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    dl_va = DataLoader(ds_va, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    dl_te = DataLoader(ds_te, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    return dl_tr, dl_va, dl_te, class_names
+
+
+def build_resnet18_from_scratch(num_classes: int) -> nn.Module:
+    model = models.resnet18(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    return model
+
+
+def train_epoch(
+    dataloader: DataLoader,
+    model: nn.Module,
+    loss_fn: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    log_every: int = 10,
+) -> tuple[float, float]:
+    size = len(dataloader.dataset)
+    model.train()
+    total_loss = 0.0
+    correct = 0
+
+    for batch, (x, y) in enumerate(dataloader):
+        x = x.to(device)
+        y = y.to(device)
+
+        pred = model(x)
+        loss = loss_fn(pred, y)
+
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += float(loss.item()) * x.size(0)
+        correct += (pred.argmax(1) == y).type(torch.int64).sum().item()
+
+        if log_every and batch % log_every == 0:
+            current = batch * x.size(0)
+            print(f"loss: {loss.item():>7f}  [{current:>5d}/{size:>5d}]")
+
+    avg_loss = total_loss / size
+    acc = correct / size
+    return avg_loss, acc
+
+
+@torch.no_grad()
+def validate(dataloader: DataLoader, model: nn.Module, loss_fn: nn.Module, device: torch.device) -> dict[str, object]:
+    size = len(dataloader.dataset)
+    model.eval()
+    total_loss = 0.0
+    correct = 0
+    y_true: list[int] = []
+    y_pred: list[int] = []
+
+    for x, y in dataloader:
+        x = x.to(device)
+        y = y.to(device)
+        pred = model(x)
+        total_loss += float(loss_fn(pred, y).item()) * x.size(0)
+        correct += (pred.argmax(1) == y).type(torch.int64).sum().item()
+        y_true.extend(y.detach().cpu().numpy().tolist())
+        y_pred.extend(pred.detach().cpu().argmax(1).numpy().tolist())
+
+    avg_loss = total_loss / size
+    acc = correct / size
+    macro_f1 = float(f1_score(y_true, y_pred, average="macro"))
+    print(f"acc: {(100 * acc):>0.1f}%  loss: {avg_loss:>8f}  macroF1: {macro_f1:>0.4f}")
+    return {"loss": avg_loss, "acc": acc, "macro_f1": macro_f1, "y_true": y_true, "y_pred": y_pred}
+
+
+def save_confusion_matrix(cm: np.ndarray, class_names: list[str], path: Path) -> None:
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel("Pred")
+    plt.ylabel("True")
+    plt.title("Confusion Matrix")
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-root", type=str, default=None)
+    parser.add_argument("--augmentation", type=str, default="standard", choices=["none", "standard"])
+    parser.add_argument("--image-size", type=int, default=224)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--out-dir", type=str, default="outputs")
+    args = parser.parse_args()
+
+    set_seed(args.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(exist_ok=True)
+    best_path = out_dir / "best_model.pt"
+    best_val_macro_f1 = -1.0
+    best_epoch = 0
+
+    data_root = resolve_data_root(args.data_root)
+    train_loader, val_loader, test_loader, class_names = make_dataloaders(
+        data_root=data_root,
+        image_size=args.image_size,
+        augmentation=args.augmentation,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        seed=args.seed,
+    )
+
+    model = build_resnet18_from_scratch(num_classes=len(class_names)).to(device)
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+    history: list[dict[str, float]] = []
+    for epoch in range(1, args.epochs + 1):
+        print(f"Epoch {epoch}/{args.epochs}")
+        train_loss, train_acc = train_epoch(train_loader, model, loss_fn, optimizer, device, log_every=10)
+        val_out = validate(val_loader, model, loss_fn, device)
+        if float(val_out["macro_f1"]) > best_val_macro_f1:
+            best_val_macro_f1 = float(val_out["macro_f1"])
+            best_epoch = epoch
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "val_macro_f1": best_val_macro_f1,
+                    "model_state_dict": model.state_dict(),
+                },
+                best_path,
+            )
+        history.append(
+            {
+                "epoch": float(epoch),
+                "train_loss": float(train_loss),
+                "train_acc": float(train_acc),
+                "val_loss": float(val_out["loss"]),
+                "val_acc": float(val_out["acc"]),
+                "val_macro_f1": float(val_out["macro_f1"]),
+            }
+        )
+
+    pd.DataFrame(history).to_csv(out_dir / "learning_curve.csv", index=False)
+
+    if best_path.exists():
+        ckpt = torch.load(best_path, map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        print(f"Best model: epoch {best_epoch}  val_macroF1 {best_val_macro_f1:.4f}")
+
+    print("Test")
+    test_out = validate(test_loader, model, loss_fn, device)
+    y_true = test_out["y_true"]
+    y_pred = test_out["y_pred"]
+    acc = accuracy_score(y_true, y_pred)
+    macro_f1 = f1_score(y_true, y_pred, average="macro")
+    cm = confusion_matrix(y_true, y_pred)
+    save_confusion_matrix(cm, class_names, out_dir / "confusion_matrix.png")
+
+    print(
+        {
+            "test_acc": float(acc),
+            "test_macro_f1": float(macro_f1),
+        }
+    )
+
+
+if __name__ == "__main__":
+    main()
