@@ -80,8 +80,5 @@ def get_loader(strategy,batch_size=32,num_workers=2):
     return train_loader,test_loader,val_loader
 
 
-
-if __name__=='__main__':
-    set_seed(42)
-    #选择不同增强方案：
-    train_loader,test_loader,val_loader=get_loader('standard')
+set_seed(42)
+train_loader,test_loader,val_loader=get_loader('standard')

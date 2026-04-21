@@ -42,7 +42,7 @@ def max_pool(input_data,pool_size=2,stride=2):
         for c in range(channel_in):
             for i in range(out_h):
                 for j  in range(out_w):
-                    region=input_data[b,:,i*stride:i*stride+pool_size,j*stride:j*stride+pool_size]
+                    region=input_data[b,c,i*stride:i*stride+pool_size,j*stride:j*stride+pool_size]
                     output[b,c,i,j]=np.max(region)
                     #记录最大值的位置
                     idx=np.argmax(region)#扁平化后最大值的索引
@@ -91,27 +91,8 @@ def cross_entropy(pred,label):
     B=pred.shape[0]
     loss=0.0
     for i in range(B):
-        loss+= -np.log(pred[label]+1e-9) #取自然对数;1e-9极小值，防止为0
+        loss+= -np.log(pred[i,label[i]]+1e-9) #取自然对数;1e-9极小值，防止为0
     return loss/B
-
-#向前传播
-input_image=np.random.randn(5,5)
-kernels=np.random.randn(3,3)
-
-conv_out=conv(input_image,kernels)
-relu_out=relu(conv_out)
-pool_out=max_pool(relu_out)
-flatten=pool_out.flatten().reshape(-1,1) #(行，列)-1 表示行数不确定，自动计算
-
-dense=Dense(flatten.shape[0],10) #flatten.shape[0],flatten行数
-logits=dense.forward(flatten)
-probs=softmax(logits)
-
-print("输入图像：\n", input_image)
-print("卷积输出：\n", conv_out)
-print("ReLU输出：\n", relu_out)
-print("池化输出：\n", pool_out)
-print("分类概率：\n", probs)
 
 #反向传播
 def softmax_cross_entropy_backward(pred,label):
@@ -119,7 +100,7 @@ def softmax_cross_entropy_backward(pred,label):
     grad=pred.copy() #模型对B个图片预测的每类的概率，（i，j）是对第i张图片预测的为第j类的概率
     for i in range(B):
         grad[i,label[i]]-=1
-        return grad/B
+    return grad/B
 
 def relu_back(d_out,x):
     dx=d_out.copy()
@@ -138,7 +119,7 @@ def max_pool_back(d_out,max_pos,pool_size=2,stride=2):
             for i in range(out_h):
                 for j in range(out_w):
                     r,c_off=max_pos[(b,c,i,j)]
-                    dx[b,c,i*stride+r,j*stride+c_off]=d_out[b,c,i,j]#还原时，记录的最大值位置处为梯度值，其余为零。
+                    dx[b,c,i*stride+r,j*stride+c_off]+=d_out[b,c,i,j]#还原时，记录的最大值位置处为梯度值，其余为零。
     return dx
 
 def conv_backward(input_data,kernels,d_out,stride=1,padding=0):
@@ -166,10 +147,27 @@ def conv_backward(input_data,kernels,d_out,stride=1,padding=0):
                     dx[b,:,i*stride:i*stride+kernel_h,j*stride:j*stride+kernel_w]+=grad*kernels[c]
                     #对卷积的梯度，累加
                     input_region=input_data[b,:,i*stride:i*stride+kernel_h,j*stride:j*stride+kernel_w]
-                    dk[c]+=d_out[b,c,i,j]*input_region
+                    dk[c]+=grad*input_region
     
     #去掉填充
     if padding>0:
         dx=dx[:,:,padding:input_h-padding,padding:input_w-padding]
     
     return dx,dk
+
+
+#正则化
+class dropout:
+    def __init__(self,p=0.5):
+        self.p=p
+        self.mask=None
+        
+    def forward(self,x,train=True):
+        if train:
+            self.mask=(np.random.rand(*x.shape)>self.p)/(1-self.p)
+            return x*self.mask
+        else:
+            return x
+    
+    def backward(self,d_out):
+        return d_out*self.mask
