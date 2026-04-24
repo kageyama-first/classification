@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 #卷积层
 def conv(input_data,kernels,stride=1,padding=0):
@@ -10,11 +11,15 @@ def conv(input_data,kernels,stride=1,padding=0):
     #输入输出维度
     batch_size,channel_in,input_h,input_w = input_data.shape
     channel_out,channel_in_k,kernel_h,kernel_w = kernels.shape
+    print(channel_in,channel_in_k)
     assert channel_in==channel_in_k
     
+    windows=sliding_window_view(input_data,(kernel_h,kernel_w),axis=(2,3))
+    windows=windows[:,:,::stride,::stride,:,:]
+    output=np.einsum('bcijhw,ochw->boij',windows,kernels,optimize=True)
+    '''
     out_h = (input_h-kernel_h)//stride+1
     out_w = (input_w-kernel_w)//stride+1
-    
     output=np.zeros((batch_size,channel_out,out_h,out_w))
     for b in range(batch_size):
         for c in range(channel_out):
@@ -23,6 +28,7 @@ def conv(input_data,kernels,stride=1,padding=0):
                 for j in range(out_w):
                     region=input_data[b,:,i*stride : i*stride+kernel_h,j*stride : j*stride+kernel_w]
                     output[b,c,i,j]=np.sum(region*kernel)
+    '''
     return output
 
 #ReLU 激活
@@ -35,8 +41,15 @@ def max_pool(input_data,pool_size=2,stride=2):
     batch_size,channel_in,input_h,input_w= input_data.shape
     out_h=(input_h-pool_size)//stride +1
     out_w=(input_w-pool_size)//stride +1
-    output=np.zeros((batch_size,channel_in,out_h,out_w))
     
+    windows=sliding_window_view(input_data,(pool_size,pool_size),axis=(2,3))
+    windows=windows[:,:,::stride,::stride,:,:]# (B, C, H_out, W_out, pool_size, pool_size)
+    flat_windows=windows.reshape(batch_size,channel_in,out_h,out_w,-1)
+    
+    output=np.max(flat_windows,axis=-1)
+    max_pos=np.argmax(flat_windows,axis=-1)
+    '''
+    output=np.zeros((batch_size,channel_in,out_h,out_w))
     max_pos={}
     for b in range(batch_size):
         for c in range(channel_in):
@@ -48,7 +61,9 @@ def max_pool(input_data,pool_size=2,stride=2):
                     idx=np.argmax(region)#扁平化后最大值的索引
                     r=idx//pool_size
                     c_offset=idx%pool_size
-                    max_pos[(b,c,i,j)]=(r,c_offset)
+                    max_pos[b,c,i,j,0]=r
+                    max_pos[b,c,i,j,1]=c_offset
+    '''
     return output,max_pos
 
 #展平
@@ -59,23 +74,23 @@ def flatten(input_data):
 #全连接层
 class  Dense:
     def __init__(self,input_size,output_size):
-        self.w =np.random.randn(output_size,input_size)*0.01
+        self.w =np.random.randn(output_size,input_size).astype(np.float32)*0.01
         self.b =np.zeros((output_size,1))
     
     def forward(self,x):
-        self.x=x #x=(B,D_in)
-        output=np.dot(self.w,x.T)+self.b #(D_out,D_in)*(D_in,B)
+        self.x=x #x shape: (B, input_size)
+        output=np.dot(self.w,x.T)+self.b #(output_size,input_size)*(D_in,B)
         return output.T
     
     def backward(self,d_out,lr=0.01):
-        d_out=d_out.T
-        dw=np.dot(d_out,self.x.T) #矩阵对应元素相乘，.T表示矩阵的转置
+        d_out=d_out.T#(D_out,B)
+        dw=np.dot(d_out,self.x)
         db=np.sum(d_out,axis=1,keepdims=True)
-        dx=np.dot(self.w.T,d_out) #(D_in,B)
+        dx=np.dot(d_out.T,self.w)
         
         self.w-=lr*dw
         self.b-=lr*db
-        return dx.T
+        return dx
         
 
 #Softmax 输出
@@ -102,24 +117,36 @@ def softmax_cross_entropy_backward(pred,label):
         grad[i,label[i]]-=1
     return grad/B
 
-def relu_back(d_out,x):
-    dx=d_out.copy()
-    dx[x<=0]=0
-    return dx
 
 def max_pool_back(d_out,max_pos,pool_size=2,stride=2):
     #d_out: 损失对池化输出的梯度 (B, C, H_out, W_out)
     batch_size,channel_out,out_h,out_w=d_out.shape
     input_h=(out_h-1)*stride+pool_size
     input_w=(out_w - 1) * stride + pool_size
-    dx=np.zeros((batch_size,channel_out,input_h,input_w))
+    dx=np.zeros((batch_size,channel_out,input_h,input_w),dtype=d_out.dtype)
     
+    r_off=max_pos//pool_size
+    c_off=max_pos%pool_size
+    
+    #第i个窗口的起始坐标
+    h_start=np.arange(out_h)*stride
+    w_start=np.arange(out_w)*stride
+    h_start_grid,w_start_grid=np.meshgrid(h_start,w_start,indexing='ij')
+    
+    #反向
+    h_abs=h_start_grid[np.newaxis,np.newaxis,:,:]+r_off
+    w_abs=w_start_grid[np.newaxis,np.newaxis,:,:]+c_off
+    #累加：对于每个输出位置 (b, c, i, j)，将其梯度 d_out[b,c,i,j] 加到 dx[b, c, h_abs[b,c,i,j], w_abs[b,c,i,j]] 上
+    np.add.at(dx,(slice(None),slice(None),h_abs,w_abs),d_out)
+    '''
     for b in range(batch_size):
         for c in range(channel_out):
             for i in range(out_h):
                 for j in range(out_w):
-                    r,c_off=max_pos[(b,c,i,j)]
+                    r=max_pos[b,c,i,j,0]
+                    c_off=max_pos[b,c,i,j,1]
                     dx[b,c,i*stride+r,j*stride+c_off]+=d_out[b,c,i,j]#还原时，记录的最大值位置处为梯度值，其余为零。
+    '''
     return dx
 
 def conv_backward(input_data,kernels,d_out,stride=1,padding=0):
@@ -132,6 +159,23 @@ def conv_backward(input_data,kernels,d_out,stride=1,padding=0):
     B,C_in,input_h,input_w=input_data.shape
     C_out,C_in_k,kernel_h,kernel_w=kernels.shape
     assert C_in==C_in_k
+    windows=sliding_window_view(input_data,(kernel_h,kernel_w),axis=(2,3))
+    windows=windows[:,:,::stride,::stride,:,:]
+    
+    #dk
+    dk=np.einsum('bcijhw,boij->cohw',windows,d_out,optimize=True)
+    dk=dk.transpose(1,0,2,3)
+    #dx
+    if padding>0:
+        d_out=np.pad(d_out,((0,0),(0,0),(kernel_h-1,kernel_h-1),(kernel_w-1,kernel_w-1)),mode='constant')
+    
+    windows_d=sliding_window_view(d_out,(kernel_h,kernel_w),axis=(2,3))
+    windows_d=windows_d[:,:,:input_h,:input_w,:,:]
+    kernels_rot=np.rot90(kernels,k=2,axes=(2,3)) # 旋转180度
+    kernels_rot=kernels_rot.transpose(1,0,2,3)#(C_in, C_out, kH, kW)
+    dx=np.einsum('boijhw,cohw->bcij',windows_d,kernels_rot,optimize=True)#o（输出通道）、h、w（核尺寸），i、j 保留。结果 dx(B, C_in, input_h, input_w)
+    
+    '''
     _,_,out_h,out_w=d_out.shape
     
     dx=np.zeros_like(input_data)
@@ -148,7 +192,7 @@ def conv_backward(input_data,kernels,d_out,stride=1,padding=0):
                     #对卷积的梯度，累加
                     input_region=input_data[b,:,i*stride:i*stride+kernel_h,j*stride:j*stride+kernel_w]
                     dk[c]+=grad*input_region
-    
+    '''
     #去掉填充
     if padding>0:
         dx=dx[:,:,padding:input_h-padding,padding:input_w-padding]

@@ -1,6 +1,6 @@
 import torch
 from torchvision import datasets,transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader,Dataset
 import random
 import numpy as np
 
@@ -61,7 +61,7 @@ train_trans_strong=transforms.Compose([
 
 val_test_trans=train_trans_none
 
-def get_loader(strategy,batch_size=32,num_workers=2):
+def get_loader(strategy,batch_size=32,num_workers=8):
     trans_dict={
         'none':train_trans_none,
         'standard':train_trans_standard,
