@@ -61,7 +61,7 @@ train_trans_strong=transforms.Compose([
 
 val_test_trans=train_trans_none
 
-def get_loader(strategy,batch_size=32,num_workers=2):
+def get_loader(strategy,batch_size=32,num_workers=8):
     trans_dict={
         'none':train_trans_none,
         'standard':train_trans_standard,
@@ -80,8 +80,5 @@ def get_loader(strategy,batch_size=32,num_workers=2):
     return train_loader,test_loader,val_loader
 
 
-
-if __name__=='__main__':
-    set_seed(42)
-    #选择不同增强方案：
-    train_loader,test_loader,val_loader=get_loader('standard')
+set_seed(42)
+train_loader,test_loader,val_loader=get_loader('standard')
