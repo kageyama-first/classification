@@ -1,0 +1,2 @@
+model,strategy,seed,epochs,best_epoch,best_val_macro_f1,test_loss,test_acc,test_macro_f1
+SimpleCNN_CBAM,standard,42,30,27,0.6586178996712498,0.9184208180823463,0.6736292428198434,0.6365480965734773
