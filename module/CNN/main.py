@@ -4,9 +4,12 @@ import torch.optim as optim
 import pandas as pd
 import os
 from tqdm import tqdm
+from collections import Counter
 from sklearn.metrics import accuracy_score, f1_score
 from CNN_model_torchbased import *
 from drawing import *
+#类别不均衡
+from loss_type import CW_loss,FocalLoss
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -36,12 +39,15 @@ def test(model,loader,device):
     return acc, macro_f1,avg_loss,all_preds,all_labels
 
 
-def train_and_evaluate(model,train_loader,val_loader,device, epochs):
+def train_and_evaluate(model,train_loader,val_loader,device, epochs,criterion=nn.CrossEntropyLoss(),lr=0.001):
     model = model.to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.01)
-    
-    # 记录训练过程中的损失和指标
+    optimizer = optim.AdamW(model.parameters(), lr=lr,weight_decay=0.001)
+    #混合精度
+    if device.type == 'cuda':
+        autocast_t = torch.amp.autocast(device_type='cuda', dtype=torch.float16)
+    else:
+        autocast_t = torch.amp.autocast(device_type='cpu', dtype=torch.bfloat16)
+    #记录训练过程中的损失和指标
     history_train_loss=[]
     history_train_acc=[]
     best_epoch=0
@@ -57,12 +63,12 @@ def train_and_evaluate(model,train_loader,val_loader,device, epochs):
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         for inputs, labels in progress_bar:
             inputs, labels = inputs.to(device), labels.to(device)
-            
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            with autocast_t:
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
             
             #记录数据
             _, preds = torch.max(outputs, 1)
@@ -106,7 +112,7 @@ if __name__ == '__main__':
     set_seed(42)
     EPOCHS = 30
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+    print(torch.cuda.is_available())
     #存储实验结果
     if not os.path.exists("results"):
         os.makedirs("results")
@@ -116,6 +122,14 @@ if __name__ == '__main__':
     class_names = tmp_train.dataset.classes
     num_classes = len(class_names)
     print(f"Detected {num_classes} classes: {class_names}")
+    
+    #计算类别权重
+    train_targets=tmp_train.dataset.targets
+    class_counts=Counter(train_targets)
+    total=len(train_targets)
+    class_weights = [total / (num_classes * class_counts[i]) for i in range(num_classes)]
+    class_weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
+
     
     # 1.基础模型
     strategy=['none','standard','weak','strong']
@@ -136,12 +150,17 @@ if __name__ == '__main__':
         
         for i, s in enumerate(strategy):
             print(f"\n[Experiment {i+1}] {model_name} + Strategy: {s}")
-            model = ModelClass(num_classes)
-            
+            model = ModelClass(num_classes).to(device)
+            # model=torch.compile(model)
             train_loader, test_loader, val_loader = get_loader(s, batch_size=32)
             
-            # 训练与验证
-            train_acc ,train_loss,best_epoch,best_val_f1= train_and_evaluate(model, train_loader, val_loader,device, epochs=EPOCHS)
+            #训练与验证--可更改loss类型
+            '''共三种损失类型：
+            CrossEntropyLoss()(默认)
+            CW_loss(class_weights_tensor)
+            FocalLoss(alpha=None,gamma=2.0,reduction='mean')参数可更改'''
+            
+            train_acc ,train_loss,best_epoch,best_val_f1= train_and_evaluate(model, train_loader, val_loader,device, epochs=EPOCHS,criterion=CW_loss(class_weights_tensor))
             #最佳模型
             model.load_state_dict(torch.load("best_model.pth"))
             # 最终验证与测试
@@ -164,10 +183,11 @@ if __name__ == '__main__':
             # 保存AdvancedCNN预测结果用于画混淆矩阵
             if model_name == 'AdvancedCNN':
                 adv_test_results[s] = {'preds': test_preds, 'labels': test_labels}
-
+    
     # 输出统计数据为 CSV
     df_results = pd.DataFrame(csv_results)
     df_results.to_csv("experiment_results.csv", index=False)
+    
     print("\n" + "="*50)
     print("CSV file 'experiment_results.csv' successfully saved!")
     print(df_results)

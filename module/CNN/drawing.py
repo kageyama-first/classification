@@ -76,7 +76,7 @@ def plot_metrics_grouped_bar(csv_data, model_name, save_path=None):
     width = 0.2  # 柱子宽度
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(x - 1.5*width, val_acc, width, label='Val Acc', color="#9DBEF1")
+    ax.bar(x - 1.5*width, val_acc, width, label='Val Acc', color="#669CED")
     ax.bar(x - 0.5*width, test_acc, width, label='Test Acc', color="#5dba73")
     ax.bar(x + 0.5*width, val_f1, width, label='Val F1', color="#f08d90")
     ax.bar(x + 1.5*width, test_f1, width, label='Test F1', color="#aca1d1")

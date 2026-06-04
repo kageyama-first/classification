@@ -1,5 +1,5 @@
 from dataset import get_loader,set_seed
-from module.CNN.CNN_module import CNN
+from module.CNN.CNN_model_numpybased import CNN
 from sklearn.metrics import accuracy_score,f1_score,confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
