@@ -51,34 +51,16 @@
 ├── dataset.py               # 数据集加载和预处理
 ├── data_split.py            # 数据集划分脚本
 ├── data/                    # 原始数据目录
-│   ├── cardboard/           # 纸板类图片
-│   ├── glass/               # 玻璃类图片
-│   ├── metal/               # 金属类图片
-│   ├── paper/               # 纸张类图片
-│   ├── plastic/             # 塑料类图片
-│   └── trash/               # 其他垃圾图片
+│   ├── cardboard/           
+│   ├── glass/               
+│   ├── metal/               
+│   ├── paper/               
+│   ├── plastic/             
+│   └── trash/               
 ├── data_split/              # 划分后的数据集
 │   ├── test/                # 测试集（20%）
-│   │   ├── cardboard/
-│   │   ├── glass/
-│   │   ├── metal/
-│   │   ├── paper/
-│   │   ├── plastic/
-│   │   └── trash/
 │   ├── train/               # 训练集（70%）
-│   │   ├── cardboard/
-│   │   ├── glass/
-│   │   ├── metal/
-│   │   ├── paper/
-│   │   ├── plastic/
-│   │   └── trash/
 │   └── val/                 # 验证集（10%）
-│       ├── cardboard/
-│       ├── glass/
-│       ├── metal/
-│       ├── paper/
-│       ├── plastic/
-│       └── trash/
 ├── kaggle_CNN/              # Kaggle代码，包括实验二和实验三
 ├── model/                   # 模型相关代码
 │   ├── CNN/                 # 自定义CNN实现
