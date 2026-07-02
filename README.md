@@ -135,7 +135,9 @@ chmod +x run.sh
 
 ### 或复制到个人账户运行
 点击 **Copy and Edit** 保存到自己的Kaggle账户，方便修改。
+## 补充：
 
+kaggle中数据处理和模型架构的代码与本地文件一致，本地CNN目录下的best_model.pth为kaggle上实验导出的最佳模型参数
 ---
 
 ## 快速开始
