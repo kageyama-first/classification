@@ -64,7 +64,9 @@
 ├── results/               # 实验结果
 └── README.md
 ```
-
+# 复现
+其中实验二和实验三在kaggle中进行，使用T4GPU
+https://www.kaggle.com/code/kageyamafirst/garbage-classification-cnn/edit
 
 # 模型
 
