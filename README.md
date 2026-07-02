@@ -48,25 +48,123 @@
 # 项目结构
 
 ```text
-.
-├── data/                  # 数据集
-├── models/                # 网络模型
-│   ├── simple_cnn.py
-│   ├── advanced_cnn.py
-│   ├── resnet18.py
-│   └── cbam.py
-├── augmentation.py        # 数据增强
-├── losses.py              # 损失函数
-├── train.py               # 训练
-├── evaluate.py            # 测试
-├── gradcam.py             # Grad-CAM可视化
-├── checkpoints/           # 模型权重
-├── results/               # 实验结果
+├── dataset.py               # 数据集加载和预处理
+├── data_split.py            # 数据集划分脚本
+├── data/                    # 原始数据目录
+│   ├── cardboard/           # 纸板类图片
+│   ├── glass/               # 玻璃类图片
+│   ├── metal/               # 金属类图片
+│   ├── paper/               # 纸张类图片
+│   ├── plastic/             # 塑料类图片
+│   └── trash/               # 其他垃圾图片
+├── data_split/              # 划分后的数据集
+│   ├── test/                # 测试集（20%）
+│   │   ├── cardboard/
+│   │   ├── glass/
+│   │   ├── metal/
+│   │   ├── paper/
+│   │   ├── plastic/
+│   │   └── trash/
+│   ├── train/               # 训练集（70%）
+│   │   ├── cardboard/
+│   │   ├── glass/
+│   │   ├── metal/
+│   │   ├── paper/
+│   │   ├── plastic/
+│   │   └── trash/
+│   └── val/                 # 验证集（10%）
+│       ├── cardboard/
+│       ├── glass/
+│       ├── metal/
+│       ├── paper/
+│       ├── plastic/
+│       └── trash/
+├── kaggle_CNN/              # Kaggle代码，包括实验二和实验三
+├── model/                   # 模型相关代码
+│   ├── CNN/                 # 自定义CNN实现
+│   │   └── code/
+│   │       ├── CNN_layers.py           # CNN层定义
+│   │       ├── CNN_model_numpybased.py # NumPy实现的CNN
+│   │       ├── CNN_model_torchbased.py # PyTorch实现的CNN
+│   │       ├── drawing.py              # 可视化绘图工具
+│   │       ├── loss_type.py            # 损失函数定义
+│   │       ├── main.py                 # CNN主程序入口
+│   │       ├── train_based_numpy.py    # NumPy训练脚本
+│   │       └── __init__.py
+│   ├── GradCAM/             # Grad-CAM可视化
+│   │   ├── GradCAM_CNN.py             # Grad-CAM实现
+│   │   └── outputs/                   # Grad-CAM输出
+│   │       ├── AdvancedCNN/            # 高级CNN可视化
+│   │       ├── after_CBAM/             # CBAM注意力机制后可视化
+│   │       │   └── cnn_cbam/
+│   │       └── cnn_gradcam/            # 基础CNN的Grad-CAM
+│   │           └── SimpleCNN/
+│   └── ResNet18/            # ResNet18实现
+│       ├── code/
+│       │   ├── main.py                # ResNet18主程序
+│       │   ├── plot_beautiful_charts.py # 图表绘制
+│       │   ├── resnet_garbage_classification.py # 分类实现
+│       │   └── __init__.py
+│       └── outputs/
+│           └── predictions/           # 预测结果
+│               ├── pretrained_none/   # 无预训练+无数据增强
+│               ├── pretrained_standard/ # 有预训练+标准增强
+│               ├── scratch_none/      # 从头训练+无增强
+│               └── scratch_standard/  # 从头训练+标准增强
+└── results/                 # 实验结果汇总
 └── README.md
 ```
 # 复现
-其中实验二和实验三在kaggle中进行，使用T4GPU
-https://www.kaggle.com/code/kageyamafirst/garbage-classification-cnn/edit
+
+## 1.本地实验（ResNet18 + Grad-CAM）
+
+### 环境准备
+```bash
+conda create -n py39 python=3.9 -y
+conda activate py39
+pip install torch torchvision matplotlib numpy pillow opencv-python scikit-learn tqdm
+```
+
+### 数据准备
+```bash
+# 将图片放入 data/类别/ 目录，然后运行：
+python data_split.py
+```
+
+### 一键运行
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+### 输出位置
+- 模型权重：`model/ResNet18/code/checkpoints/`
+- Grad-CAM热力图：`model/GradCAM/outputs/`
+- 日志文件：`logs/`
+
+---
+
+## 2.Kaggle实验（CNN模型，T4 GPU）
+
+### 直接运行
+1. 访问：[https://www.kaggle.com/code/kageyamafirst/garbage-classification-cnn](https://www.kaggle.com/code/kageyamafirst/garbage-classification-cnn)
+2. 右侧 Settings → Accelerator → 选择 **T4 GPU**
+3. 点击右上角 **Run All**（约11秒完成）
+
+### 或复制到个人账户运行
+点击 **Copy and Edit** 保存到自己的Kaggle账户，方便修改。
+
+---
+
+## 快速开始
+
+```bash
+# 1. 本地运行
+./run.sh
+
+# 2. Kaggle运行：打开链接 → 选T4 GPU → Run All
+# https://www.kaggle.com/code/kageyamafirst/garbage-classification-cnn
+```
 
 # 模型
 
